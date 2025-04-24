@@ -1,6 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum,PhysAddr};
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -178,4 +178,32 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+//虚拟地址->虚拟页号->物理页号->物理基地址->物理地址
+/// Converts a user-space pointer to a kernel-space mutable reference.
+///
+/// # Arguments
+///
+/// * `token` - The token representing the user-space page table.
+/// * `ptr` - A mutable pointer in user-space to be converted.
+///
+/// # Returns
+///
+/// A mutable reference to the kernel-space memory corresponding to the user-space pointer.
+pub fn user_ptr_to_kernel_ref<T>(token: usize, ptr: *mut T) -> &'static mut T {
+    //根据 token 创建一个 PageTable 实例，用于操作用户态的页表
+    let page_table = PageTable::from_token(token);
+    //将用户态指针 ptr 转换为虚拟地址 VirtAddr 类型
+    let v = VirtAddr::from(ptr as usize);
+    //获取偏移量
+    let offset = v.page_offset();
+    //将虚拟地址转换为虚拟页号
+    let vpn = v.floor();
+    //将虚拟页号翻译成对应页表项并返回
+    let mut p: PhysAddr = page_table.translate(vpn).unwrap().ppn().into();
+    //将页内偏移量 offset 加到物理地址 p 上，得到完整的物理地址
+    p.0 += offset;
+    //将物理地址 p 转换为对应的内核态可变引用
+    p.get_mut()
 }

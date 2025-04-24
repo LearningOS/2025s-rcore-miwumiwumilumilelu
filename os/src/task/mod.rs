@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
-
+use crate::config::MAX_SYSCALL_NUM;
 pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
@@ -153,6 +153,36 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn increase_sys_call(&self, sys_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        inner.tasks[current_task].syscall_time[sys_id] += 1;
+        if sys_id == 64 {
+            debug!(
+                "increase sys_call_times of SYSCALL_WRITE:{}",
+                inner.tasks[current_task].syscall_time[sys_id]
+            );
+        }
+    }
+
+    fn get_sys_call_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        inner.tasks[inner.current_task].syscall_time.clone()
+    }
+    
+
+    fn mmap(&self, start: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        inner.tasks[current_task].memory_set.mmap(start, len, port)
+    }
+
+    fn munmap(&self, start: usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        inner.tasks[current_task].memory_set.unmmap(start, len)
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +231,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Increase the sys call count
+pub fn increase_sys_call(sys_id: usize) {
+    TASK_MANAGER.increase_sys_call(sys_id);
+}
+
+/// return the sys count array of the current task
+pub fn get_sys_call_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_sys_call_times()
+}
+
+/// select_cur_task_to_mmap
+pub fn select_cur_task_to_mmap(start: usize, len: usize, port: usize) -> isize {
+    TASK_MANAGER.mmap(start, len, port)
+}
+
+/// select_cur_task_to_mmap
+pub fn select_cur_task_to_munmap(start: usize, len: usize) -> isize {
+    TASK_MANAGER.munmap(start, len)
 }
