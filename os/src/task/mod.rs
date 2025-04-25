@@ -244,11 +244,11 @@ pub fn get_sys_call_times() -> [u32; MAX_SYSCALL_NUM] {
 }
 
 /// select_cur_task_to_mmap
-pub fn select_cur_task_to_mmap(start: usize, len: usize, port: usize) -> isize {
+pub fn to_mmap(start: usize, len: usize, port: usize) -> isize {
     TASK_MANAGER.mmap(start, len, port)
 }
 
 /// select_cur_task_to_mmap
-pub fn select_cur_task_to_munmap(start: usize, len: usize) -> isize {
+pub fn to_munmap(start: usize, len: usize) -> isize {
     TASK_MANAGER.munmap(start, len)
 }

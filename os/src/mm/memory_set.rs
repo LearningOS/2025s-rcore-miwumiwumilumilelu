@@ -1,6 +1,6 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
-use super::{frame_alloc, frame_dealloc, FrameTracker};
+use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
@@ -268,14 +268,17 @@ impl MemorySet {
 
     /// mmap
     pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
-        let va_start: VirtAddr = start.into();
+        let va_start: VirtAddr = start.into(); // 接收start虚拟地址
         if !va_start.aligned() {
             debug!("unmap fail don't aligned");
             return -1;
-        }
-        let mut va_start: VirtPageNum = va_start.into();
-
-        let mut flags = PTEFlags::from_bits(port as u8).unwrap();
+        }// start虚拟地址必须是4k对齐，检验4k对齐
+        if start + len > MEMORY_END {
+            debug!("unmap fail out of memory");
+            return -1;
+        }// 检验是否越界
+        let mut va_start: VirtPageNum = va_start.into();// 将虚拟地址转成虚拟页号
+        let mut flags = PTEFlags::empty();
         if port & 0b0000_0001 != 0 {
             flags |= PTEFlags::R;
         }
@@ -289,21 +292,23 @@ impl MemorySet {
         }
         flags |= PTEFlags::U;
         flags |= PTEFlags::V;
+        // 取标志位
+        if flags.is_empty() {
+            debug!("unmap fail no permission");
+            return -1;
+        }
 
-        let va_end: VirtAddr = (start + len).into();
-        let va_end: VirtPageNum = va_end.ceil();
-
-        // println!(
-        //     "start = {:x} && va_star = {} && va_end = {}",
-        //     start, va_start.0, va_end.0
-        // );
+        let va_end: VirtAddr = (start + len).into();// 找到结束虚拟地址
+        let va_end: VirtPageNum = va_end.ceil();// 向上取整，找到结束虚拟页号
+        if va_start >= va_end {
+            debug!("unmap fail start >= end");
+            return -1;
+        }
 
         while va_start != va_end {
-            // println!("map va_start = {}", va_start.0);
-            if let Some(pte) = self.page_table.translate(va_start) {
+            if let Some(pte) = self.page_table.translate(va_start) {// 生成页表项
                 if pte.is_valid() {
-                    // println!("mmap found exit va_start {}", va_start.0);
-                    return -1;
+                    return -1;// 如果已经映射了，返回-1
                 }
             }
             if let Some(ppn) = frame_alloc() {
@@ -317,37 +322,29 @@ impl MemorySet {
         0
     }
 
-    /// unmap
+    /// munmap
     pub fn unmmap(&mut self, start: usize, len: usize) -> isize {
-        if len == 0 {
-            return -1; // invalid   
-        }
         let va_start: VirtAddr = start.into();
         if !va_start.aligned() {
             debug!("unmap fail don't aligned");
             return -1;
-        }
-        let mut va_start: VirtPageNum = va_start.into();
+        }// 检查4k对齐
+        let mut va_start: VirtPageNum = va_start.into();// 虚拟地址转成虚拟页号
 
-        let va_end: VirtAddr = (start + len).into();
-        let va_end: VirtPageNum = va_end.ceil();
+        let va_end: VirtAddr = (start + len).into();// 找到结束虚拟地址
+        let va_end: VirtPageNum = va_end.ceil();// 向上取整，找到结束虚拟页号
 
         while va_start != va_end {
-            // 检查页表项是否存在
-            if let Some(item) = self.page_table.translate(va_start) {
-                if !item.is_valid() {
-                    debug!("unmap fail: invalid page table entry");
+            if let Some(unpte) = self.page_table.translate(va_start) {
+                if !unpte.is_valid() {
+                    debug!("unmap on no map vpn");
                     return -1;
-                }
-                // 释放物理页帧
-                frame_dealloc(item.ppn());
-                // 解除映射
-                self.page_table.unmap(va_start);
-                self.map_tree.remove(&va_start);
+                }// 没有映射，则不需要unmap
             } else {
-                debug!("unmap fail: page table entry not found");
                 return -1;
             }
+            self.page_table.unmap(va_start);
+            self.map_tree.remove(&va_start);
             va_start.step();
         }
         0
