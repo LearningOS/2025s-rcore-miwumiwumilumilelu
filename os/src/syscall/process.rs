@@ -59,7 +59,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
         }
         1 => {
             // id 应被视作 *mut u8，写入 data 的最低字节
-            let mut buffers = translated_byte_buffer(token, _id as *const u8, 1);
+            let mut buffers = translated_byte_buffer(token, _id as *mut u8, 1);
             if let Some(buffer) = buffers.first_mut() {
                 buffer[0] = (_data & 0xff) as u8;
                 0 // 成功
