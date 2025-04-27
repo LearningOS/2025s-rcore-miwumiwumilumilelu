@@ -56,6 +56,20 @@ pub fn enable_timer_interrupt() {
 /// trap handler
 #[no_mangle]
 pub fn trap_handler() -> ! {
+    let sp:usize;
+    unsafe{
+        core::arch::asm!(
+            "mv {}, sp",
+            out(reg) sp,
+        );
+    }
+    extern "C"{
+        fn boot_stack_lower_bound();
+        fn boot_stack_top();
+    }
+    // check if sp is in the kernel stack
+    assert!(sp < boot_stack_lower_bound as usize || sp >= boot_stack_top as usize);
+    
     set_kernel_trap_entry();
     let cx = current_trap_cx();
     let scause = scause::read(); // get trap cause

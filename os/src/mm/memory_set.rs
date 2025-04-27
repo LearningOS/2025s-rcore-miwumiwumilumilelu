@@ -235,6 +235,7 @@ impl MemorySet {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.page_table.translate(vpn)
     }
+
     /// shrink the area to new_end
     #[allow(unused)]
     pub fn shrink_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {
@@ -265,6 +266,10 @@ impl MemorySet {
         }
     }
 
+    /// Finds the page table entry corresponding to the given virtual page number.
+    pub fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
+        self.page_table.find_pte(vpn)    
+    }
 
     /// mmap
     pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {

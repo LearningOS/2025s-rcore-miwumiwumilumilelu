@@ -17,12 +17,14 @@ mod task;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 use crate::config::MAX_SYSCALL_NUM;
 pub use context::TaskContext;
+use crate::mm::{PageTableEntry,VirtAddr,VirtPageNum};
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -46,6 +48,7 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    syscall_count: BTreeMap<usize, BTreeMap<usize, u32>>,
 }
 
 lazy_static! {
@@ -64,6 +67,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_count: BTreeMap::new()
                 })
             },
         }
@@ -156,20 +160,56 @@ impl TaskManager {
 
     fn increase_sys_call(&self, sys_id: usize) {
         let mut inner = self.inner.exclusive_access();
-        let current_task = inner.current_task;
-        inner.tasks[current_task].syscall_time[sys_id] += 1;
-        if sys_id == 64 {
-            debug!(
-                "increase sys_call_times of SYSCALL_WRITE:{}",
-                inner.tasks[current_task].syscall_time[sys_id]
-            );
-        }
+        let current = inner.current_task;
+        *inner.syscall_count.entry(current)
+                            .or_insert_with(BTreeMap::new)
+                            .entry(sys_id)
+                            .or_insert(0) += 1;
     }
 
+    /// 获取单个系统调用次数
+    fn get_syscall_count(&self, sys_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let value = inner.syscall_count
+                    .get(&current)
+                    .and_then(|inner| inner.get(&sys_id))
+                    .copied()
+                    .unwrap_or(0);
+        return value as usize;
+    }
+    
     fn get_sys_call_times(&self) -> [u32; MAX_SYSCALL_NUM] {
         let inner = self.inner.exclusive_access();
         inner.tasks[inner.current_task].syscall_time.clone()
     }
+    
+    fn find_pte_by_virtual_address(&self, virtual_address: usize) -> Option<PageTableEntry> {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let va = VirtAddr::from(virtual_address);
+        let vpn = va.floor();
+        let pte = inner.tasks[current].memory_set.find_pte(vpn);
+        if let Some(x) = pte {
+            return Some(x.clone());
+        }
+        else {
+            return None;
+        }
+    }
+
+    /// 用page_table的find_pte直接返回pte的拷贝，参数为VirtPageNum
+    fn find_pte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let pte = inner.tasks[current].memory_set.find_pte(vpn);
+        if let Some(x) = pte {
+            return Some(x.clone());
+        }
+        else {
+             return None;
+        }
+    }    
     
 
     fn mmap(&self, start: usize, len: usize, port: usize) -> isize {
@@ -241,6 +281,20 @@ pub fn increase_sys_call(sys_id: usize) {
 /// return the sys count array of the current task
 pub fn get_sys_call_times() -> [u32; MAX_SYSCALL_NUM] {
     TASK_MANAGER.get_sys_call_times()
+}
+
+/// Get the syscall count of the current task
+pub fn get_syscall_count(syscall_id: usize) -> usize {
+    TASK_MANAGER.get_syscall_count(syscall_id)
+}
+
+/// Find PageTableEntry by VirtPageNum, create a frame for a 4KB page table if not exist
+pub fn find_pte_by_virtual_address(virtual_address: usize) ->  Option<PageTableEntry> {
+    TASK_MANAGER.find_pte_by_virtual_address(virtual_address)
+}
+/// Find PageTableEntry by VirtPageNum
+pub fn find_pte(virtual_address:VirtPageNum) -> Option<PageTableEntry> {
+    TASK_MANAGER.find_pte(virtual_address)
 }
 
 /// select_cur_task_to_mmap

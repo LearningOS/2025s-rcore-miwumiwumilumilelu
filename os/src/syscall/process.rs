@@ -49,31 +49,48 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     let token = current_user_token();
     match _trace_request {
         0 => {
-            // id 应被视作 *const u8，读取地址处的值
-            let buffers = translated_byte_buffer(token, _id as *const u8, 1);
-            if let Some(buffer) = buffers.first() {
-                buffer[0] as isize
-            } else {
-                -1 // 地址不可见或不可读
+            // 检查地址是否超出 sv39 范围
+            if _id > ((1 << 39) - 1) {
+                return -1;
             }
+            // 检查 PTE 是否存在且可读
+            let pte = crate::task::find_pte_by_virtual_address(_id);
+            if let Some(pte) = pte {
+                if !pte.is_valid() || !pte.readable() {
+                    return -1;
+                }
+            } else {
+                return -1;
+            }
+            // 安全读取用户内存（已通过 PTE 检查）
+            let buffers = translated_byte_buffer(token, _id as *const u8, 1);
+            buffers[0][0] as isize // 直接访问，无需额外检查
         }
         1 => {
-            // id 应被视作 *mut u8，写入 data 的最低字节
-            let mut buffers = translated_byte_buffer(token, _id as *mut u8, 1);
-            if let Some(buffer) = buffers.first_mut() {
-                buffer[0] = (_data & 0xff) as u8;
-                0 // 成功
-            } else {
-                -1 // 地址不可见或不可写
+            // 检查地址是否超出 sv39 范围
+            if _id > ((1 << 39) - 1) {
+                return -1;
             }
+            // 检查 PTE 是否存在且可写
+            let pte = crate::task::find_pte_by_virtual_address(_id);
+            if let Some(pte) = pte {
+                if !pte.is_valid() || !pte.writable() {
+                    return -1;
+                }
+            } else {
+                return -1;
+            }
+            // 安全写入用户内存（已通过 PTE 检查）
+            let mut buffers = translated_byte_buffer(token, _id as *mut u8, 1);
+            buffers[0][0] = (_data & 0xff) as u8; // 直接访问
+            0
         }
         2 => {
             // 查询当前任务调用编号为 id 的系统调用次数
             if _id >= MAX_SYSCALL_NUM {
-                return -1;
+                return -1;  
             }
-            let syscall_times = crate::task::get_sys_call_times();
-            syscall_times[_id] as isize
+            crate::task::get_syscall_count(_id) as isize
         }
         _ => {
             -1
