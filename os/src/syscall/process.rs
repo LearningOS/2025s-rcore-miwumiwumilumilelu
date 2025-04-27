@@ -49,11 +49,9 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     let token = current_user_token();
     match _trace_request {
         0 => {
-            // 检查地址是否超出 sv39 范围
             if _id > ((1 << 39) - 1) {
                 return -1;
             }
-            // 检查 PTE 是否存在且可读
             let pte = crate::task::find_pte_by_virtual_address(_id);
             if let Some(pte) = pte {
                 if !pte.is_valid() || !pte.readable() {
@@ -62,16 +60,13 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
             } else {
                 return -1;
             }
-            // 安全读取用户内存（已通过 PTE 检查）
             let buffers = translated_byte_buffer(token, _id as *const u8, 1);
-            buffers[0][0] as isize // 直接访问，无需额外检查
+            buffers[0][0] as isize
         }
         1 => {
-            // 检查地址是否超出 sv39 范围
             if _id > ((1 << 39) - 1) {
                 return -1;
             }
-            // 检查 PTE 是否存在且可写
             let pte = crate::task::find_pte_by_virtual_address(_id);
             if let Some(pte) = pte {
                 if !pte.is_valid() || !pte.writable() {
@@ -80,9 +75,8 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
             } else {
                 return -1;
             }
-            // 安全写入用户内存（已通过 PTE 检查）
             let mut buffers = translated_byte_buffer(token, _id as *mut u8, 1);
-            buffers[0][0] = (_data & 0xff) as u8; // 直接访问
+            buffers[0][0] = (_data & 0xff) as u8;
             0
         }
         2 => {

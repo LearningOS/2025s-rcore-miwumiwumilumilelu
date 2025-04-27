@@ -168,7 +168,7 @@ impl TaskManager {
     }
 
     /// 获取单个系统调用次数
-    fn get_syscall_count(&self, sys_id: usize) -> usize {
+    fn  get_syscall_count(&self, sys_id: usize) -> usize {
         let inner = self.inner.exclusive_access();
         let current = inner.current_task;
         let value = inner.syscall_count
@@ -176,9 +176,10 @@ impl TaskManager {
                     .and_then(|inner| inner.get(&sys_id))
                     .copied()
                     .unwrap_or(0);
-        return value as usize;
+        value as usize
     }
     
+    /// 获取当前任务的系统调用次数数组
     fn get_sys_call_times(&self) -> [u32; MAX_SYSCALL_NUM] {
         let inner = self.inner.exclusive_access();
         inner.tasks[inner.current_task].syscall_time.clone()
@@ -284,8 +285,8 @@ pub fn get_sys_call_times() -> [u32; MAX_SYSCALL_NUM] {
 }
 
 /// Get the syscall count of the current task
-pub fn get_syscall_count(syscall_id: usize) -> usize {
-    TASK_MANAGER.get_syscall_count(syscall_id)
+pub fn get_syscall_count(sys_id: usize) -> usize {
+    TASK_MANAGER.get_syscall_count(sys_id)
 }
 
 /// Find PageTableEntry by VirtPageNum, create a frame for a 4KB page table if not exist
