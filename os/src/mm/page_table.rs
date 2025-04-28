@@ -213,3 +213,20 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .unwrap()
         .get_mut()
 }
+
+pub fn user_ptr_to_kernel_ref<T>(token: usize, ptr: *mut T) -> &'static mut T {
+    //根据 token 创建一个 PageTable 实例，用于操作用户态的页表
+    let page_table = PageTable::from_token(token);
+    //将用户态指针 ptr 转换为虚拟地址 VirtAddr 类型
+    let v = VirtAddr::from(ptr as usize);
+    //获取偏移量
+    let offset = v.page_offset();
+    //将虚拟地址转换为虚拟页号
+    let vpn = v.floor();
+    //将虚拟页号翻译成对应页表项并返回
+    let mut p: PhysAddr = page_table.translate(vpn).unwrap().ppn().into();
+    //将页内偏移量 offset 加到物理地址 p 上，得到完整的物理地址
+    p.0 += offset;
+    //将物理地址 p 转换为对应的内核态可变引用
+    p.get_mut()
+}

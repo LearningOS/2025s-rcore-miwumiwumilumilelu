@@ -34,6 +34,7 @@ lazy_static! {
 pub struct MemorySet {
     page_table: PageTable,
     areas: Vec<MapArea>,
+    map_tree: BTreeMap<VirtPageNum, FrameTracker>,
 }
 
 impl MemorySet {
@@ -42,6 +43,7 @@ impl MemorySet {
         Self {
             page_table: PageTable::new(),
             areas: Vec::new(),
+            map_tree: BTreeMap::new(),
         }
     }
     /// Get the page table token
