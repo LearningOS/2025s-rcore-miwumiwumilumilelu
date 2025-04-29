@@ -302,6 +302,90 @@ impl MemorySet {
             false
         }
     }
+
+    /// map a range of virtual memory.
+    pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize{
+        let va_start: VirtAddr = start.into(); // 接收start虚拟地址
+        if !va_start.aligned() {
+            debug!("unmap fail don't aligned");
+            return -1;
+        }// start虚拟地址必须是4k对齐，检验4k对齐
+        if start + len > MEMORY_END {
+            debug!("unmap fail out of memory");
+            return -1;
+        }// 检验是否越界
+        let mut va_start: VirtPageNum = va_start.into();// 将虚拟地址转成虚拟页号
+        let mut flags = PTEFlags::empty();
+        if port & 0b0000_0001 != 0 {
+            flags |= PTEFlags::R;
+        }
+
+        if port & 0b0000_0010 != 0 {
+            flags |= PTEFlags::W;
+        }
+
+        if port & 0b0000_0100 != 0 {
+            flags |= PTEFlags::X;
+        }
+        flags |= PTEFlags::U;
+        flags |= PTEFlags::V;
+        // 取标志位
+        if flags.is_empty() {
+            debug!("unmap fail no permission");
+            return -1;
+        }
+
+        let va_end: VirtAddr = (start + len).into();// 找到结束虚拟地址
+        let va_end: VirtPageNum = va_end.ceil();// 向上取整，找到结束虚拟页号
+        if va_start >= va_end {
+            debug!("unmap fail start >= end");
+            return -1;
+        }
+
+        while va_start != va_end {
+            if let Some(pte) = self.page_table.translate(va_start) {// 生成页表项
+                if pte.is_valid() {
+                    return -1;// 如果已经映射了，返回-1
+                }
+            }
+            if let Some(ppn) = frame_alloc() {
+                self.page_table.map(va_start, ppn.ppn, flags);
+                self.map_tree.insert(va_start, ppn);
+            } else {
+                return -1;
+            }
+            va_start.step();
+        }
+        0
+    }
+
+    /// Unmap a range of virtual memory.
+    pub fn unmmap(&mut self, start: usize, len: usize) -> isize {
+        let va_start: VirtAddr = start.into();
+        if !va_start.aligned() {
+            debug!("unmap fail don't aligned");
+            return -1;
+        }// 检查4k对齐
+        let mut va_start: VirtPageNum = va_start.into();// 虚拟地址转成虚拟页号
+
+        let va_end: VirtAddr = (start + len).into();// 找到结束虚拟地址
+        let va_end: VirtPageNum = va_end.ceil();// 向上取整，找到结束虚拟页号
+
+        while va_start != va_end {
+            if let Some(unpte) = self.page_table.translate(va_start) {
+                if !unpte.is_valid() {
+                    debug!("unmap on no map vpn");
+                    return -1;
+                }// 没有映射，则不需要unmap
+            } else {
+                return -1;
+            }
+            self.page_table.unmap(va_start);
+            self.map_tree.remove(&va_start);
+            va_start.step();
+        }
+        0
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {

@@ -3,12 +3,11 @@ use alloc::sync::Arc;
 
 use crate::{
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str, user_ptr_to_kernel_ref, VirtAddr, VirtPageNum, frame_alloc, PTEFlags },
+    mm::{translated_refmut, translated_str, user_ptr_to_kernel_ref},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next,
     },
-    config::MEMORY_END,
     timer::get_time_us,
 };
 
@@ -131,9 +130,6 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     if _len == 0 {
         return 0;
     }
-    if _start+_len > MEMORY_END{
-        return -1;
-    }
     //port只能是0x1,0x3,0x5,0x7
     // 0x1: read
     // 0x3: read and write
@@ -142,53 +138,11 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     if _port & !0x7 != 0 || _port & 0x7 == 0 {
         return -1;
     }
-    let va_start : VirtAddr = _start.into();
-    if !va_start.aligned() {
-        return -1;
-    }
-    let va_start : VirtPageNum = va_start.into();
-    let va_end : VirtAddr = (_start+_len).into();
-    let va_end : VirtPageNum = va_end.ceil();
-
-    let mut flags = PTEFlags::empty();
-        if _port & 0b0000_0001 != 0 {
-            flags |= PTEFlags::R;
-        }
-
-        if _port & 0b0000_0010 != 0 {
-            flags |= PTEFlags::W;
-        }
-
-        if _port & 0b0000_0100 != 0 {
-            flags |= PTEFlags::X;
-        }
-        flags |= PTEFlags::U;
-        flags |= PTEFlags::V;
-        // 取标志位
-        if flags.is_empty() {
-            debug!("unmap fail no permission");
-            return -1;
-        }
-
-    // 目前已经检查标志位，对齐并准备需要分配的页框号范围
     let task = current_task().unwrap();
-    let inner = task.inner_exclusive_access();
+    let mut inner = task.inner_exclusive_access();
     // 这里的inner是一个MutexGuard，表示对当前任务的独占访问
     // 通过inner获取当前任务的内存集
-    for i in va_start.0..va_end.0 {
-        if let Some(pte) = inner.memory_set.translate(va_start) {// 生成页表项
-            if pte.is_valid() {
-                return -1;// 如果已经映射了，返回-1
-            }
-        }
-        if let Some(ppn) = frame_alloc() {
-            page_table.map(va_start, ppn.ppn, flags);
-            map_tree.insert(va_start, ppn);
-        } else {
-            return -1;
-        }
-    }
-
+    inner.memory_set.mmap(_start, _len, _port);
     0
 }
 
@@ -198,7 +152,12 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    to_munmap(_start, _len)
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    // 这里的inner是一个MutexGuard，表示对当前任务的独占访问
+    // 通过inner获取当前任务的内存集
+    inner.memory_set.unmmap(_start, _len);
+    0
 }
 
 /// change data segment size
