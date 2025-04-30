@@ -68,6 +68,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// The stride of the process
+    pub stride: u8,
+
+    /// The priority of the process
+    pub priority: u8,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +124,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -191,6 +199,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
@@ -207,51 +217,79 @@ impl TaskControlBlock {
     }
 
     /// Create a new process
+    /// 创建一个新的子进程，加载指定的ELF程序。
+    ///
+    /// # 参数
+    /// * `self` - 父进程的原子引用计数指针
+    /// * `elf_data` - 用户程序的ELF二进制数据
+    ///
+    /// # 返回值
+    /// 新创建进程的原子引用计数指针
+    ///
+    /// # 安全说明
+    /// 1. 要求持有父进程的inner排他锁
+    /// 2. 涉及物理内存直接操作，需确保ELF解析正确性
     pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        // 获取父进程的排他访问权（自动释放锁通过Drop机制）
         let mut parent_inner = self.inner_exclusive_access();
+        
+        // 从ELF文件解析出子进程内存布局
         let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        
+        // 获取陷阱上下文的物理页号（固定虚拟地址转换）
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
-            .unwrap() 
+            .expect("TRAP_CONTEXT_BASE must be mapped")
             .ppn();
 
-        let pid_handle = pid_alloc();
-        let kernel_stack = kstack_alloc();
-        let kernel_stack_top = kernel_stack.get_top();
-        // 构造TaskControlBlock
+        // 分配进程资源
+        let pid_handle = pid_alloc();  // 进程ID分配器
+        let kernel_stack = kstack_alloc();  // 内核栈分配
+        let kernel_stack_top = kernel_stack.get_top();  // 获取内核栈顶地址
+
+        // 构建任务控制块（TCB）
         let task_control_block = Arc::new(TaskControlBlock {
             pid: pid_handle,
             kernel_stack,
             inner: unsafe {
+                // 注意：UPSafeCell需要手动保证并发安全
+                // 以下字段初始化需保持原子性
                 UPSafeCell::new(TaskControlBlockInner {
-                    trap_cx_ppn,
-                    base_size: user_sp,
-                    task_cx: TaskContext::goto_trap_return(kernel_stack_top),
-                    task_status: TaskStatus::Ready,
-                    memory_set,
-                    parent: Some(Arc::downgrade(self)),
-                    children: Vec::new(),
-                    exit_code: 0,
-                    heap_bottom: parent_inner.heap_bottom,
-                    program_brk: parent_inner.program_brk,
+                    trap_cx_ppn,        // 陷阱上下文物理页
+                    base_size: user_sp, // 用户栈初始栈顶
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top), // 初始任务上下文
+                    task_status: TaskStatus::Ready, // 初始状态为可调度
+                    memory_set,         // 内存映射集
+                    parent: Some(Arc::downgrade(self)), // 父进程弱引用
+                    children: Vec::new(),      // 子进程列表
+                    exit_code: 0,       // 初始退出码
+                    heap_bottom: parent_inner.heap_bottom,  // 继承堆起始地址
+                    program_brk: parent_inner.program_brk,   // 继承堆当前中断点
+                    stride: 0,          // 调度步长（用于stride调度算法）
+                    priority: 16,       // 默认调度优先级
                 })
             },
         });
+
+        // 维护进程树关系
         parent_inner.children.push(task_control_block.clone());
-        drop(parent_inner);
+        drop(parent_inner);  // 显式释放父进程锁，防止死锁
 
-        let inner = task_control_block.inner_exclusive_access();
-        let trap_cx = inner.get_trap_cx(); // TaskControlBlockInner的get_trap_cx()通过trap_cx_ppn找到TrapContext的引用
-        // 构造TrapContext
-        *trap_cx = TrapContext::app_init_context(
-            entry_point,
-            user_sp,
-            KERNEL_SPACE.exclusive_access().token(),
-            kernel_stack_top,
-            trap_handler as usize,
-        );
-
-        drop(inner);
+        // 初始化陷阱上下文
+        {
+            let inner = task_control_block.inner_exclusive_access();
+            let trap_cx = inner.get_trap_cx();  // 通过物理页号直接访问内存
+            
+            // 构造初始用户态上下文
+            *trap_cx = TrapContext::app_init_context(
+                entry_point,    // 用户程序入口地址
+                user_sp,        // 用户栈顶指针
+                KERNEL_SPACE.exclusive_access().token(),  // 内核页表令牌
+                kernel_stack_top,  // 内核栈顶（用于trap处理）
+                trap_handler as usize,  // 内核trap处理函数地址
+            );
+            // inner在此处自动释放锁（Drop实现）
+        }
         
         task_control_block
     }

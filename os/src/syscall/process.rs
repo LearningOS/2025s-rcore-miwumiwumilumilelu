@@ -128,7 +128,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         current_task().unwrap().pid.0
     );
     if _len == 0 {
-        return 0;
+        return -1;
     }
     //port只能是0x1,0x3,0x5,0x7
     // 0x1: read
@@ -142,8 +142,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     let mut inner = task.inner_exclusive_access();
     // 这里的inner是一个MutexGuard，表示对当前任务的独占访问
     // 通过inner获取当前任务的内存集
-    inner.memory_set.mmap(_start, _len, _port);
-    0
+    inner.memory_set.mmap(_start, _len, _port)
 }
 
 /// YOUR JOB: Implement munmap.
@@ -156,8 +155,7 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     let mut inner = task.inner_exclusive_access();
     // 这里的inner是一个MutexGuard，表示对当前任务的独占访问
     // 通过inner获取当前任务的内存集
-    inner.memory_set.unmmap(_start, _len);
-    0
+    inner.memory_set.unmmap(_start, _len)
 }
 
 /// change data segment size
@@ -203,5 +201,12 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio <= 1 {
+        return -1;
+    }
+
+    let task = current_task().unwrap();
+    task.inner_exclusive_access().priority = _prio as u8;
+
+    return _prio;
 }
